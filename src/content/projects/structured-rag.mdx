@@ -1,0 +1,500 @@
+
+
+---
+
+# **Production-Grade Text-Based RAG System**
+
+## **Detailed Technical Report**
+
+---
+
+# **1\. Introduction**
+
+This project aimed to build a **production-oriented, text-based Retrieval-Augmented Generation (RAG) system** capable of:
+
+* Parsing structured PDF documents (including grid-based tables)  
+* Preserving layout integrity  
+* Exporting parsed data before embedding  
+* Performing semantic search using FAISS  
+* Generating grounded answers using Mistral 7B  
+* Providing a web-based chat interface with adjustable generation parameters
+
+The system was designed to operate strictly in a **text-based pipeline (no OCR allowed)** and follow enterprise-level architectural principles.
+
+---
+
+# **2\. Initial Setup & Early Challenges**
+
+The project began with a basic PDF → Text → Chunk → Embed → Query workflow in Jupyter Notebook.
+
+### **Early Problems Encountered**
+
+1. Import errors (Pillow `_imaging`, SciPy `_ccallback_c`)  
+2. Llama BOS token duplication warning  
+3. Poor answer quality  
+4. Flat text extraction losing table structure  
+5. Missing words during parsing  
+6. Incorrect chunking splitting logical content  
+7. Inability to preserve multi-column layout
+
+Each issue required systematic debugging and architectural refinement.
+
+---
+
+# **3\. Improving LLM Integration**
+
+Initially, prompt formatting caused duplicate BOS tokens in `llama-cpp`.
+
+### **Solution:**
+
+* Removed manual `<s>` tokens.  
+* Switched to `create_chat_completion` API.  
+* Structured system and user messages cleanly.  
+* Reduced temperature for more deterministic output.
+
+Result:
+
+* Sharper, more grounded responses.  
+* Reduced hallucination.
+
+---
+
+# **4\. Major Architectural Shift: Layout-Aware Parsing**
+
+The biggest turning point was realizing the PDF was **grid-structured with multiple columns**.
+
+Flat extraction using:
+
+page.get\_text()
+
+Destroyed column structure and lost semantic meaning.
+
+---
+
+## **4.1 Word-Level Extraction**
+
+We switched to:
+
+page.get\_text("words")
+
+This provided:
+
+* X/Y coordinates  
+* Bounding boxes  
+* Word-level granularity
+
+This ensured **zero word loss**.
+
+---
+
+## **4.2 Grid Reconstruction Attempts**
+
+We initially attempted:
+
+* Line-based grid detection  
+* Clustering vertical and horizontal lines
+
+But discovered the PDF used **rectangle drawing objects (`'re'`)**, not simple lines.
+
+---
+
+## **4.3 Final Column Grid Detection Strategy**
+
+We:
+
+1. Extracted rectangle boundaries.  
+2. Clustered all X positions.  
+3. Detected stable vertical column boundaries.  
+4. Reconstructed column zones.  
+5. Assigned words to columns using X-coordinate ranges.
+
+This allowed:
+
+* Correct detection of 4 columns.  
+* Handling merged cells.  
+* Multi-page continuation support.  
+* No hardcoding of column positions.
+
+---
+
+# **5\. Logical Record Consolidation**
+
+The PDF had a critical structural challenge:
+
+Descriptions spanned multiple visual rows.
+
+Example:
+
+| Chapter | Section | Title | Description |
+| ----- | ----- | ----- | ----- |
+| 1 | A | Intro | First line |
+|  |  |  | Second line |
+|  |  |  | Third line |
+
+Without consolidation, each row was treated independently.
+
+---
+
+## **Solution**
+
+We implemented a row consolidation engine:
+
+* If Chapter/Section/Title are empty,  
+* Append Description to previous record.
+
+Result:
+
+```json
+{  
+  "chapter": "1",  
+  "section": "A",  
+  "title": "Intro",  
+  "description": "First line Second line Third line"  
+}
+```
+
+This was a major upgrade in semantic integrity.
+
+---
+
+# **6\. Pre-Embedding Markdown Export (Teacher Requirement)**
+
+The teacher required:
+
+After parsing and before chunking, export parsed data to Markdown.
+
+This was implemented as:
+
+* Timestamped `.md` file generation  
+* Includes:  
+  * Document metadata  
+  * Page 1 content  
+  * Full structured table
+
+This layer ensures:
+
+* Transparency  
+* Auditability  
+* Debugging before embedding  
+* Version control of ingestion
+
+Pipeline became:
+
+PDF  
+ → Parse  
+ → Consolidate  
+ → Export Markdown  
+ → Embed
+
+This separation significantly improved architectural clarity.
+
+---
+
+# **7\. Embedding Architecture**
+
+Instead of chunking arbitrary text, we embedded structured records:
+
+Chapter: X  
+Section: Y  
+Title: Z  
+Description: ...
+
+Embeddings were generated using:
+
+* SentenceTransformers (MiniLM)  
+* Cosine normalization  
+* FAISS IndexFlatIP
+
+This improved retrieval precision significantly.
+
+---
+
+# **8\. Retrieval & Answer Generation**
+
+### **Retrieval Flow**
+
+Query  
+ → Embed query  
+ → FAISS similarity search  
+ → Top-K structured records  
+ → Inject structured context into LLM
+
+### **Improvements Observed**
+
+* Sharper answers  
+* Less noise  
+* Better contextual grounding  
+* Reduced hallucination
+
+The system prompt enforced:
+
+* Answer only from context  
+* Concise response  
+* No fabrication
+
+---
+
+# **9\. Web App Conversion**
+
+The pipeline was converted into a local web application with:
+
+* Chat interface  
+* Temperature slider  
+* Top-p slider  
+* Real-time query handling  
+* Automatic parsing & Markdown export  
+* Embedded FAISS retrieval
+
+Final runtime architecture:
+
+User uploads PDF  
+ → Parsing layer  
+ → Logical consolidation  
+ → Markdown export  
+ → Embedding  
+ → Indexing  
+ → Chat query  
+ → LLM response
+
+This achieved enterprise usability.
+
+---
+
+# **10\. Key Engineering Decisions**
+
+* Strictly text-based (No OCR)  
+* No hardcoded column boundaries  
+* Dynamic column detection  
+* Rectangle-based layout recovery  
+* Logical record modeling before embedding  
+* Markdown snapshot before semantic processing  
+* Separation of parsing and embedding layers
+
+These decisions transformed the project from a simple RAG prototype into a production-ready system.
+
+---
+
+# **11\. Final System Capabilities**
+
+✔ Layout-aware PDF parsing  
+✔ Multi-column structured reconstruction  
+✔ Multi-line record consolidation  
+✔ Pre-embedding Markdown export  
+✔ Structured semantic embedding  
+✔ FAISS vector search  
+✔ Mistral 7B local inference  
+✔ Adjustable temperature & top-p  
+✔ Deployable web interface
+
+---
+
+# **12\. System Architecture Overview**
+
+PDF  
+ → Word-level extraction  
+ → Column grid detection  
+ → Row reconstruction  
+ → Logical consolidation  
+ → Markdown snapshot  
+ → Structured embedding  
+ → FAISS indexing  
+ → Retrieval  
+ → Mistral generation  
+ → Web chat interface
+
+---
+
+# **13\. Project Maturity Level**
+
+This system reflects:
+
+* Production-oriented thinking  
+* Enterprise ingestion practices  
+* Structured document intelligence  
+* Modular design  
+* Robust debugging and iteration  
+* Clean separation of concerns
+
+---
+
+14\. Later continued in antigravity…
+
+# **Conclusion**
+
+The project evolved from a simple PDF-based RAG implementation into a structured, layout-aware, production-grade document intelligence system.
+
+Every problem encountered — from import errors to layout corruption — was resolved through architectural refinement rather than quick fixes.
+
+The final system demonstrates:
+
+* Correct parsing  
+* Semantic precision  
+* Transparent ingestion  
+* Enterprise readiness  
+* Controlled LLM generation
+
+This is no longer a basic RAG demo.
+
+It is a structured document intelligence pipeline with a deployable interface.
+
+---
+
+# **Modular RAG App Walkthrough**
+
+I have successfully refactored your notebook into a modular Streamlit application.
+
+# **Implementation Plan \- Modular RAG App**
+
+Refactor the existing   
+phase1.ipynb notebook into a modular Python application with a Streamlit frontend.
+
+## **User Review Required**
+
+NOTE
+
+I will be creating a new folder `modular_rag` inside your `rag_p` directory to keep things organized. The application will use the existing models and data found in the `rag_p` directory.
+
+## **Proposed Changes**
+
+### Directory Structure
+
+`C:\Users\xorstack\Purabh\rag_p\modular_rag\`
+
+### Backend Components
+
+#### \[NEW\] 
+
+#### config.py
+
+* Define paths for models, data, and reports.  
+* Configuration for LLM (context window, threads).
+
+#### \[NEW\] 
+
+#### parser.py
+
+* Consolidate all PDF parsing logic:  
+  * `extract_cell_rectangles`  
+  * `detect_column_boundaries`  
+  * `reconstruct_table_from_page_using_grid`  
+  * `consolidate_rows`  
+  * Fallback mechanisms.
+
+#### \[NEW\] 
+
+#### vector\_store.py
+
+* Class `VectorStore`:  
+  * Load `SentenceTransformer`.  
+  * Create/Load `faiss` index.  
+  * `add_records(records)`  
+  * `search(query, k)`
+
+#### \[NEW\] 
+
+#### llm\_handler.py
+
+* Class `LLMHandler`:  
+  * Initialize `Llama` (llama-cpp-python).  
+  * `generate_answer(query, context, temperature, top_p)`
+
+### Frontend
+
+#### \[NEW\] 
+
+#### app.py
+
+* Streamlit application.  
+* Sidebar:  
+  * Model Parameters (Temperature, Top P).  
+  * File Processor (Button to trigger processing of PDFs in `data/` folder).  
+* Main Area:  
+  * Chat Interface (User input, LLM response).  
+  * Display of relevant context (optional but helpful).
+
+### Dependencies
+
+#### \[NEW\] 
+
+#### requirements.txt
+
+* `streamlit`  
+* `pymupdf`  
+* `sentence-transformers`  
+* `faiss-cpu`  
+* `llama-cpp-python`
+
+## **Verification Plan**
+
+### Automated Tests
+
+* None planned (shifting from notebook to app).
+
+### Manual Verification
+
+1. **Environment Setup**: Install requirements.  
+2. **Logic Verification**: Run specific usage scripts to ensure parser works as expected on the sample PDF.  
+3. **App Launch**: Run `streamlit run modular_rag/app.py`.  
+4. **Functional Testing**:  
+   * Process the PDF.  
+   * Ask questions (e.g., "What is the detailed description of chapter 5?").  
+   * Adjust sliders (Temperature) and verify response changes.
+
+## **Directory Structure**
+
+Your new application is located in `rag_p/modular_rag/`.  
+modular\_rag/  
+├── backend/  
+│   ├── config.py  
+│   ├── parser.py  
+│   ├── vector\_store.py  
+│   └── llm\_handler.py  
+├── app.py  
+└── requirements.txt
+
+## **How to Run**
+
+1. **Open Terminal** in the `rag_p` directory:  
+2. bash  
+3. cd C:\\Users\\xorstack\\Purabh\\rag\_p  
+4. **Activate Virtual Environment**: Make sure your `venv` is active.  
+5. bash  
+6. venv\\Scripts\\activate  
+7. **Install Dependencies**:  
+8. bash  
+9. pip install \-r modular\_rag/requirements.txt  
+10. **Launch the App**:  
+11. bash  
+12. streamlit run modular\_rag/app.py
+
+## **Features**
+
+* **Process Data Folder**: Click the button in the sidebar to parse all PDF files in your `data` folder and build the vector index.  
+* **Chat Interface**: Ask questions about your documents.  
+* **Settings**: Adjust Temperature and Top P in the sidebar.
+
+## **Sharing (Optional)**
+
+To share using `ngrok` (tunneling), you can run:  
+bash  
+ngrok http 8501  
+Then share the generated URL with your friends.
+
+I have created a batch file named 
+
+run\_app.bat in your project root (  
+c:\\Users\\xorstack\\Purabh\\rag\_p\\run\_app.bat).  
+This script automates the process by:
+
+1. Killing any existing process running on port 8501 (to stop previous Streamlit instances).  
+2. Killing any running ngrok instances.  
+3. Activating the virtual environment.  
+4. Starting Streamlit in a new window on port 8501.  
+5. Starting Ngrok in a separate window pointing to that port.
+
+You can now run your entire stack by simply double-clicking 
+
+run\_app.bat or running it from the command line:  
+cmd  
+.\\run\_app.bat
+

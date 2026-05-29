@@ -1,0 +1,289 @@
+# AdPrime ICD-10 Intelligence Pipeline
+
+## The Problem We Were Solving
+AdPrime's core value proposition is matching digital advertising inventory to the right medical audiences. To do that well, we need to understand what health topic a given URL is about — not just loosely ("this is a health article") but precisely, in the clinical language that the industry actually uses: ICD-10 codes.
+
+The existing system had a working pipeline: crawl a URL, extract text, send it to a cloud LLM, get medical entities back, look them up in a code table. It worked. But it had two critical limitations.
+
+*   **Limitation 1 — The cloud LLM was a dependency.** Every article processed made an API call to an external LLM provider. This meant rate limits, quota costs, data leaving the organization, and a hard dependency on internet connectivity and third-party uptime.
+*   **Limitation 2 — The pipeline had no memory or intelligence.** Each run was stateless. If a domain had been crawled and blocked by Cloudflare yesterday, the pipeline would try it again today. If "norovirus" had been resolved successfully a hundred times, it still did the same full lookup on run 101. There was no accumulation of knowledge.
+
+## The Approach
+Rather than patch the existing system, we took a research-first approach: understand what was limiting accuracy, find the authoritative data source, and redesign the resolution layer from scratch.
+
+*   **Finding 1:** The CDC publishes the complete ICD-10-CM code set annually as a flat text file. The FY2026 release contains 98,186 codes with full short and long descriptions. This is the ground truth used by every hospital, insurer, and billing system in the United States. Using anything else is inherently incomplete.
+*   **Finding 2:** SQLite with FTS5 (full-text search) can run 98,186-code lookups in under 5ms on commodity hardware, with zero external dependencies. There is no reason to pay for a vector database or external search API for this use case.
+*   **Finding 3:** Open-source instruction-tuned (Small Language Models) in the 2-4B parameter range, quantized to Q4/Q6 precision, run at acceptable speeds on CPU-only hardware and are sufficient for structured entity extraction tasks. We benchmarked several options.
+
+### Why This Model
+The local LLM selected is **numind/NuExtract (Q4_K quantization, GGUF format)**, running via on CPU.
+
+### The Benchmarking Decision
+Models were evaluated on two axes: entity extraction accuracy and structured JSON output reliability.
+
+| Model | Params | Quant | Medical NER | RAM Required | Decision |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Mistral-7B-Instruct | 7B | Q4_K_M | Good | ~5 GB | ✗ Inconsistent JSON |
+| **NuExtract-1.5** | **3.8B** | **Q4_K_M** | **Good** | **~3 GB** | **✅ Selected** |
+| Phi-3-Mini | 3.8B | Q4 | Fair | ~3 GB | ✗ Weaker clinical terms |
+| Llama-3-70B | 70B | Q4 | Excellent | ~40 GB | ✗ Exceeds hardware (32GB RAM) |
+
+`models\NuExtract-v1.5-Q4_K_M.gguf`
+*   Zero API cost for entity extraction
+*   Data privacy — patient/medical data never leaves the machine
+*   No rate limits, no quota exhaustion
+
+![Local Model Benefits](docs/local_model_benefits.png)
+
+### Why ContentFilter first?
+Beeswax logs contain mixed content — sports, finance, entertainment alongside health. Running LLM on every URL wastes compute. The `health_vocab.txt` pre-scan:
+*   Checks for medical keywords before any LLM call
+*   Saves ~86% of LLM tokens on non-medical articles
+*   Zero false negatives on genuine medical content
+
+The ContentFilter doesn't do any "AI." It uses a simple, high-performance programming technique called **String Matching**.
+
+1.  **The Dictionary:** We have a file called `health_vocab.txt` with ~120+ words (e.g., patient, surgery, cardiology, symptoms, chronic).
+2.  **The Scan:** It takes the article text and counts how many words from our dictionary appear in it.
+3.  **The Threshold:** We set a rule: "If fewer than 3 of these words appear, this is likely not a medical article."
+4.  **The Result:**
+    *   **Pass:** If it finds "heart," "valve," and "surgery," it sends it to the LLM.
+    *   **Fail:** If it's an article about a "football match" and it finds 0 medical words, it marks it as `non_medical` in your Excel sheet and stops right there.
+
+## System Overview
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                      INPUT SOURCE                           │
+│              URLs list from ad logs                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│               INTELLIGENCE ORCHESTRATOR                      │
+│                                                              │
+│  ┌──────────────────┐        ┌───────────────────────────┐  │
+│  │  Domain Memory   │        │     Content Filter        │  │
+│  │                  │        │                           │  │
+│  │ -Tracks crawl    │        │ -health_vocab.txt scan    │  │
+│  │ -outcomes per    │        │  before any LLM call      │  │
+│  │ -domain. Skips   │        │ -Saves ~86% of compute    │  │
+│  │ -known failures  │        │  on non-medical content   │  │
+│  └──────────────────┘        └───────────────────────────┘  │
+│                                                             │
+│  ┌──────────────────┐        ┌───────────────────────────┐  │
+│  │  Skill Registry  │        │    Feedback Engine        │  │
+│  │                  │        │                           │  │
+│  │ -Loads prompt    │        │ -Learns entity → code     │  │
+│  │ -files (.md)     │        │  mappings from successful │  │
+│  │  dynamically     │        │  runs. Improves over time │  │
+│  └──────────────────┘        └───────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ Medical content only
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                LOCAL LLM —                                  │
+│         numind/NuExtract · Q4_K · CPU-only                  │
+│                                                              │
+│  Task 1: Extract medical entities from article text          │
+│  Task 2: Extract audience segments and keywords              │
+│  Output: Structured JSON — zero external API call            │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ ["example: influenza A H3N2", "acute respiratory distress"]
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  ICD-10 RESOLVER ENGINE                      │
+│                                                              │
+│  Step 1 · Synonym + Spelling Normalisation                   │
+│           "heart attack"  →  "myocardial infarction"         │
+│           "amoebic"       →  "amebic"  (British → American)  │
+│                                                              │
+│  Step 2 · FTS5 Full-Text Search                              │
+│           Prefix queries: "myocardial* infarction*"          │
+│           Against 294,558 indexed terms                      │
+│                                                              │
+│  Step 3 · Score + Rank Candidates                            │
+│           Token overlap · substring containment · boosts     │
+│           Confidence tiers: high ≥ 0.85 · medium ≥ 0.60      │
+│                                                              │
+│  Step 4 · Abstain if below threshold (score < 0.45)          │
+│           Log to unresolved_entities.log for review          │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│               SQLITE DATABASE  ·                             │
+│         CDC ICD-10-CM FY2026 · Official US Standard          │
+│                                                              │
+│   98,186 total codes     74,719 billable codes               │
+│   294,558 indexed terms  FTS5 virtual table                  │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    OUTPUT RESULTS                            │
+│               structured result file with                    │
+│   ICD codes · descriptions · chapters · confidence score     │
+│   Segments · keywords · crawl status · match count           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Workflow Diagram
+![Intelligence Workflow](docs/new_md_diag.png)
+
+## The Evolution: Old System vs. New System
+
+### LLM Layer
+| Dimension | Previous System | Current System |
+| :--- | :--- | :--- |
+| Provider | Cloud API (external) | Local GGUF (on-premise) |
+| Data privacy | Data leaves org | Data never leaves machine |
+| Cost at scale | Per-call API charges | Zero marginal cost |
+| Rate limits | Yes | None |
+| Availability | Requires internet | Fully offline |
+
+### Pipeline Intelligence
+| Dimension | Previous System | Current System |
+| :--- | :--- | :--- |
+| Domain memory | None — retries every run | Caches failures, skips on next run |
+| Content pre-filter | None — all URLs hit LLM | `health_vocab.txt` scan first |
+| Token efficiency | 100% of URLs → LLM | ~14% of URLs → LLM |
+| Learning over time | Stateless each run | `FeedbackEngine` accumulates mappings |
+| Checkpoint recovery | Basic | Full checkpoint + domain state |
+
+## The Intelligence Layer — Why It Matters
+The intelligence layer is the architectural decision that separates this from a simple ETL pipeline.
+
+*   **The Content Filter.** A typical Beeswax log contains URLs from hundreds of domains — news, sports, finance, entertainment, and health all mixed together. Running the LLM on every URL regardless of content is wasteful. The `ContentFilter` scans article text against a curated medical vocabulary before any LLM call is made. If fewer than the minimum threshold of medical terms are found, the article is classified `non_medical` and skipped entirely. In practice this eliminates approximately 86% of LLM calls with zero false negatives on genuine medical content.
+*   **Domain Memory.** Web crawlers regularly encounter bot detection, Cloudflare blocks, and dead links. Without memory, the pipeline retries blocked domains on every single run. `DomainMemory` records the outcome of every domain crawl and uses it to short-circuit future attempts. A domain that returned a 403 will be marked `blocked (cached)` on the next run without making a network request.
+*   **The Feedback Engine.** The same medical entities appear repeatedly across thousands of health URLs — "diabetes", "hypertension", "influenza" appear in every health log. Without a learning mechanism, each occurrence goes through the full resolution pipeline independently. The `FeedbackEngine` records successful entity-to-code mappings and builds a knowledge base that grows richer with every run.
+
+## ICD-10 Resolver — Technical Design
+The resolver uses a four-step strategy with explicit fallback:
+
+```text
+Entity input
+    │
+    ├─► Synonym normalisation      "heart attack" → "myocardial infarction"
+    │   + Spelling normalisation   "haemorrhage"  → "hemorrhage"
+    │
+    ├─► Step 1: Direct code match  If input looks like "J10.1" → exact lookup, score 1.0
+    │
+    ├─► Step 2: FTS5 search        Tokenise, strip hyphens (FTS5 treats "-" as NOT operator),
+    │                              build prefix queries: "myocardial* infarction*"
+    │                              Score by token overlap + substring containment boosts
+    │
+    ├─► Step 3: Substring fallback  LIKE %query% against 294,558 normalised terms
+    │
+    └─► Step 4: Abstain            score < 0.45 → unresolved, logged for review
+```
+
+*   **Why FTS5 and not a vector database?** ICD-10 codes have canonical, deterministic descriptions. The matching problem is not semantic similarity — it is lexical precision. FTS5 prefix search on a well-normalised term table outperforms vector similarity for this use case, runs in microseconds, requires no GPU, and introduces no probabilistic uncertainty.
+*   **Why synonym maps instead of relying on the LLM to output ICD-canonical terms?** LLMs extract the language of the article, written for general audiences. Articles say "heart attack", "stomach flu", "shingles". ICD-10 says "myocardial infarction", "infectious gastroenteritis", "herpes zoster". The synonym map is a deterministic, auditable bridge between these two vocabularies — zero latency, zero failure modes.
+
+### Resolver Accuracy — Sample Mappings
+
+| What an article says | What the resolver finds | ICD-10 Code |
+| :--- | :--- | :--- |
+| heart attack | Myocardial infarction type 2 | I21.A1 |
+| stroke | Cerebral infarction | I63.9 |
+| high blood pressure | Essential (primary) hypertension | I10 |
+| type 2 diabetes | Type 2 diabetes mellitus with hyperglycemia | E11.65 |
+| flu / influenza A H3N2 | Influenza due to other identified influenza virus | J10.81 |
+| norovirus / stomach flu | Infectious gastroenteritis and colitis | A09 |
+| chickenpox | Varicella without complication | B01.9 |
+| shingles | Herpes zoster without complications | B02.9 |
+| sore throat | Acute pharyngitis | J02.9 |
+| amoebic dysentery | Amebic colitis (spelling auto-corrected) | A06.0 |
+| blood clot | Thrombosis | I82.91 |
+| runny nose | Acute rhinitis | J00 |
+
+## Output Fields
+
+| Field | Description |
+| :--- | :--- |
+| **source_row** | Original row number from the input spreadsheet (used for resume and tracing). |
+| **page_url** | Source URL from the input logs. |
+| **domain** | Extracted domain of the article (e.g., `healthline.com`). |
+| **crawl_status** | `success` / `failed` / `blocked_cached` / `non_medical` / `duplicate_skipped`. |
+| **icd10_codes** | Resolved ICD-10 codes, pipe-separated (e.g., `J10.81 \| I21.A1`). |
+| **icd10_descriptions** | Official clinical descriptions for the resolved codes. |
+| **icd10_chapters** | ICD-10 chapter letters, pipe-separated (e.g., `J \| I`). |
+
+## Project Structure
+
+```text
+llm-lab/
+│
+├── pipeline/                        ← Modular pipeline stages
+│   ├── runner.py                    ← Orchestrator (thin coordinator)
+│   ├── models.py                    ← RowState + PipelineDeps dataclasses
+│   ├── stages/
+│   │   ├── crawl.py                 ← Stage 1: URL fetch + domain detection
+│   │   ├── filter.py                ← Stage 2: Medical content gate
+│   │   ├── extract.py               ← Stage 3: LLM ICD entity extraction
+│   │   └── resolve.py               ← Stage 4: ICD-10 SQLite resolution
+│   └── io/
+│       ├── output_writer.py         ← Excel writer (7-column schema)
+│       └── sqlite_writer.py         ← SQLite writer (server default)
+│
+├── intelligence/
+│   ├── config.py                    ← All tuneable settings + env vars
+│   ├── core/
+│   │   ├── langfuse_client.py       ← Tracing + prompt management
+│   │   ├── icd_resolver.py          ← Bridge to SQLite resolver
+│   │   ├── content_filter.py        ← Medical pre-filter
+│   │   ├── domain_memory.py         ← Crawl failure cache
+│   │   ├── feedback_engine.py       ← Learning system
+│   │   └── skill_registry.py        ← Prompt file loader (Langfuse → local fallback)
+│   └── skills/
+│       ├── skill-icd10-extractor.md ← LLM extraction prompt (fallback)
+│       └── health_vocab.txt         ← Medical keyword dictionary
+│
+├── server/
+│   └── api.py                       ← FastAPI: /results, /upload, /admin
+│
+├── src/app/llm/
+│   ├── lmstudio_provider.py         ← Unsloth/LM Studio HTTP provider
+│   ├── ollama_http_provider.py      ← Ollama provider
+│   ├── gguf_cpu_provider.py         ← Direct GGUF CPU provider
+│   └── factory.py                   ← Provider factory (LLM_MODE env var)
+│
+├── scripts/
+│   └── langfuse_model_setup.py      ← Auto-registers model in Langfuse on make up
+│
+├── uploads/                         ← User-uploaded input files (gitignored)
+│   └── .gitkeep
+│
+└── data/
+    └── processed/
+        └── icd10.db                 ← CDC ICD-10-CM FY2026 (98,186 codes)
+```
+
+## How to Run (Server)
+
+### 1. Start everything
+```bash
+ssh ubuntu@<server-ip>
+cd ~/llmOps/llm-lab
+make up
+```
+Then open `http://<server>:8001` and click a model to load it.
+
+### 2. Upload input spreadsheet
+Open `http://<server>:8000/upload` in a browser. The file must be `.xlsx` with a column named exactly `page_url`. Extra columns are ignored. The page validates the file before saving and shows the active input and last-run summary at all times.
+
+### 3. Run the pipeline
+```bash
+make run N=50    # process 50 URLs
+make run N=all   # process all rows
+```
+
+Results are written to SQLite and immediately queryable:
+- `http://<server>:8000/results?has_icd=true` — rows with ICD codes
+- `http://<server>:3333/traces` — Langfuse trace viewer with token counts
+
+The pipeline is fully resumable — stop at any point, re-run, it picks up from the last checkpoint with domain memory preserved.
+
+### Results Overview
+![Results Overview](docs/results_overview.png)

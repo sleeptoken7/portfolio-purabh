@@ -1,0 +1,788 @@
+# ScrollToday QA Swarm — AI-Powered Browser Testing System
+
+> **Production-grade automated QA framework** that deploys a swarm of AI-driven browser agents
+> against ScrollToday Studio, executes deep field-level tests, and surfaces findings in an
+> interactive dashboard — with PASS/FAIL assertions evaluated against a defined rule contract.
+
+---
+
+## Table of Contents
+
+1. [Project Overview](#1-project-overview)
+2. [Architecture](#2-architecture)
+3. [System Flow](#3-system-flow)
+4. [Component Breakdown](#4-component-breakdown)
+5. [Agent Design](#5-agent-design)
+6. [Testing Capabilities](#6-testing-capabilities)
+7. [AI Integration](#7-ai-integration)
+8. [Dashboard Features](#8-dashboard-features)
+9. [Deployment](#9-deployment)
+10. [Folder Structure](#10-folder-structure)
+11. [How to Run](#11-how-to-run)
+12. [Future Scope](#12-future-scope)
+
+---
+
+## 1. Project Overview
+
+### What This System Is
+
+The **ScrollToday QA Swarm** is a multi-agent automated testing framework built specifically for
+[ScrollToday Studio](https://studio.scrolltoday.com) — a digital ad creative platform. It runs
+10 parallel browser agents that each simulate a distinct type of user, navigate the application,
+create ad creatives, probe every form field with adversarial payloads, and log every interaction.
+All results feed into a real-time Streamlit dashboard.
+
+### Why It Was Built
+
+Manual QA of ad creative workflows is slow, inconsistent, and expensive. Standard unit tests
+do not catch UI-layer validation gaps, security misconfigurations, or edge-case form behaviours.
+This system was built to:
+
+- **Continuously validate** the entire creative creation workflow end-to-end
+- **Expose security vulnerabilities** such as XSS acceptance, SQL injection acceptance, and missing
+  MIME-type validation — before they reach production
+- **Measure validation coverage** — which fields enforce required-field checks, length limits, and
+  publish guards
+- **Give the engineering team actionable, rule-graded output** via a structured assertion report
+
+### Problems It Solves
+
+| Problem | How the System Solves It |
+|---|---|
+| Manual QA is too slow | 10 parallel agents complete a full test run in minutes |
+| Inconsistent human coverage | Every agent follows deterministic phases; no steps skipped |
+| XSS / SQLi go undetected | Automatic injection of attack payloads on every input field |
+| No cross-run memory | SharedMemory persists state; agents build on each other's work |
+| No formal pass/fail record | Assertion Engine evaluates rules and writes `assertion_report.json` |
+| QA findings buried in logs | Interactive dashboard surfaces everything visually |
+
+---
+
+## 2. Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Swarm Runner (v6.5)                          │
+│  multiprocessing.Pool(5)  ──  10 agents  ──  5 steps each          │
+│                                                                     │
+│  ┌──────────────┐    ┌────────────────────────────────────────┐     │
+│  │  AI Layer    │    │          SharedMemory (Manager.dict)    │     │
+│  │  OpenAI      │◄───┤  creatives / campaigns / visited_pages │     │
+│  │  Groq        │    │  field_test_reports / edited_ids        │     │
+│  └──────┬───────┘    └──────────────────┬─────────────────────┘     │
+│         │                               │                            │
+│         ▼                               ▼                            │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    Decision Engine (7 rules)                  │   │
+│  │   persona weights + shared state snapshot → next action       │   │
+│  └──────────────────────────┬───────────────────────────────────┘   │
+│                             │                                        │
+│          ┌──────────────────┼────────────────────┐                  │
+│          ▼                  ▼                     ▼                  │
+│   create_creative    deep_field_test          explore /             │
+│          │                  │                edit / campaign        │
+│          ▼                  ▼                                        │
+│  ┌───────────────┐  ┌───────────────────────────────────────────┐   │
+│  │ Deep Creator  │  │         Deep Field Testing Engine         │   │
+│  │ Engine        │  │  Phase 1: Field Variations (10 payloads)  │   │
+│  │ (14 steps)    │  │  Phase 2: File Upload (4 test files)      │   │
+│  └───────┬───────┘  │  Phase 3: Toggle Combinations            │   │
+│          │          │  Phase 4: Style / Colour Testing          │   │
+│          │          │  Phase 5: Publish Validation              │   │
+│          │          └─────────────────┬─────────────────────────┘   │
+│          └──────────────────┬─────────┘                             │
+│                             ▼                                        │
+│                     results/*.json  +  screenshots                   │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┴──────────────────┐
+              ▼                                   ▼
+   ┌─────────────────────┐          ┌─────────────────────────┐
+   │  Assertion Engine   │          │   Streamlit Dashboard   │
+   │  qa_rules.json      │          │   5 pages               │
+   │  PASS / FAIL /      │          │   Plotly charts         │
+   │  NO_DATA per rule   │          │   AI analysis panel     │
+   └─────────────────────┘          └─────────────────────────┘
+```
+
+### Key Layers
+
+| Layer | Technology | Role |
+|---|---|---|
+| Browser Automation | Playwright (sync_api) | Drives Chromium against the live application |
+| Parallelism | `multiprocessing.Pool` + `Manager` | 5 processes share state safely across boundaries |
+| AI Content | OpenAI `gpt-4o-mini` / Groq `llama-3.3-70b` | Generates unique, persona-tailored ad copy per agent |
+| Decision Engine | Pure Python (7-rule tree) | Determines the next action from shared memory + persona |
+| Memory | `Manager.dict` + `memory/memory.json` | Cross-process and cross-run persistent state |
+| Field Testing | Playwright + dataclasses | Injects 10 payload variants into every discovered input |
+| Assertion Engine | Pure Python | Evaluates test results against `qa_rules.json` contract |
+| Dashboard | Streamlit + Plotly | Visualises all test data interactively |
+| Deployment | Docker (`python:3.11-slim`) | One-command containerised run |
+
+---
+
+## 3. System Flow
+
+```
+[Agent boots]
+      │
+      ▼
+[Login]  →  POST credentials  →  wait for dashboard URL
+      │
+      ▼
+[Navigate to Creatives]  →  wait for creatives grid
+      │
+      ▼
+[Decision Engine]  ←── SharedMemory snapshot + persona + actions_done
+      │
+      ├─── create_creative ──►  [Deep Creator Engine]
+      │                              │
+      │    ① Login (if needed)       │
+      │    ② Navigate to Creatives   │
+      │    ③ Click "Create"          │
+      │    ④ Select Ad Type          │
+      │    ⑤ Select Size             │
+      │    ⑥ Select Format           │
+      │    ⑦ Wait for Editor         │
+      │    ⑧ Fill Inputs  ◄── AI content override
+      │    ⑨ Upload Files            │
+      │    ⑩ Handle Toggles          │
+      │    ⑪ Style Settings          │
+      │    ⑫ Publish                 │
+      │    ⑬ Verify Success          │
+      │
+      ├─── deep_field_test ──►  [Deep Field Testing Engine]
+      │                              │
+      │    Phase 1: 10 payloads × every input field
+      │    Phase 2: 4 file upload tests
+      │    Phase 3: Toggle combos (all-off / all-on / mixed)
+      │    Phase 4: Style inputs (tab nav, colour pickers)
+      │    Phase 5: Publish validation (empty / XSS / overflow / valid)
+      │
+      ├─── edit_creative   ──►  find unedited creative → update title
+      ├─── create_campaign ──►  navigate to campaigns → create new
+      └─── explore         ──►  random route visit + screenshot
+
+[All agents complete]
+      │
+      ▼
+[Results saved to results/*.json]
+      │
+      ▼
+[python assertion_engine.py]  ──►  results/assertion_report.json
+      │
+      ▼
+[streamlit run app.py]        ──►  http://localhost:8501
+```
+
+---
+
+## 4. Component Breakdown
+
+### `deep_creator_engine.py` — Core Execution Engine
+
+The **single source of truth** for browser automation. Every swarm version imports from here.
+
+**Responsibilities:**
+- 14 deterministic step functions (login → verify success), each with screenshot capture
+- **Bounding-box guard** (`_in_main_content`): filters out sidebar navigation elements by checking
+  that each interacted element has `bounding_box().x >= 220` (the left nav width)
+- **Screen-transition waits**: `page.wait_for_function(...)` checks visible text before proceeding
+- **Scroll sweep**: scans the page at `y = 0, 200, 400, 600, 900` to catch lazy-rendered format cards
+- **`content_override` parameter**: AI-generated content dict injected into `step_fill_inputs()`,
+  overriding static field values via substring-key matching
+- Error accumulation without raising — the caller receives a result dict with `status`,
+  `inputs_filled`, `file_uploaded`, `steps_completed`
+
+**Key exports used by v6 and v6.5:**
+
+```python
+from deep_creator_engine import (
+    run_deep_creator,                 # full 14-step flow
+    step_login, step_navigate_to_creatives, step_click_create,
+    step_select_ad_type, step_select_size, step_select_format,
+    step_wait_for_editor,
+    _wait, _in_main_content, _log, _screenshot,
+    NAV_WIDTH, SHORTCUT_RE,
+)
+```
+
+---
+
+### `run_swarm_v6.py` — AI-Powered Swarm Runner
+
+The first swarm version with LLM integration and cross-agent shared state.
+
+**Key classes / functions:**
+
+| Component | Description |
+|---|---|
+| `AIClient` | Thin adapter over OpenAI and Groq; both use `chat.completions.create()` |
+| `_build_client()` | Tries preferred provider first, falls back to the other; returns `None` if no keys |
+| `generate_creative_content()` | Calls LLM with persona-tailored prompt → `{name, headline, description, cta}` |
+| `decide_next_action()` | 7-rule priority tree; reads shared snapshot + `actions_done` list |
+| `SharedMemory` | `Manager.dict` wrapper with `load()`, `save()`, `snapshot()`, `add_creative()` etc. |
+| `run_agent(cfg)` | Top-level worker function (module-level for pickling); runs 5 decision steps |
+| `AGENT_MATRIX` | 10 agent configs × 5 personas |
+
+**Output:** `results/swarm_results_v6.json`
+
+---
+
+### `run_swarm_v6_5.py` — Deep Field Testing Engine
+
+Extends v6 with a dedicated QA action: `deep_field_test`. When a `stress_tester` or
+`edge_case_user` agent selects this action, it navigates into the creative editor and runs
+all 5 testing phases systematically.
+
+**Field Variation Payloads (10 types):**
+
+| Variation | Payload | Tests For |
+|---|---|---|
+| `normal` | AI / default content | Baseline happy path |
+| `empty` | `""` | Required-field validation |
+| `spaces` | `"   "` | Whitespace-only rejection |
+| `long_200` | `"A" × 200` | Near-limit length enforcement |
+| `long_500` | `"B" × 500` | Over-limit length enforcement |
+| `special` | `!@#$%^&*()...` | Special character handling |
+| `emoji` | `🚀 Flash Sale...` | Unicode emoji rendering |
+| `xss` | `<script>alert('xss')</script>` | XSS input sanitisation |
+| `sql` | `'; DROP TABLE creatives; --` | SQL injection rejection |
+| `unicode` | `Ünïcödé Tëxt Ñoño...` | Multibyte character handling |
+
+**File Upload Tests (4 types):**
+
+| File | Expected | Tests For |
+|---|---|---|
+| `valid_png` | Accepted | Core upload functionality |
+| `invalid_txt` | Rejected | MIME / extension validation |
+| `large_png` (~4 MB) | May be rejected | File-size limit enforcement |
+| `zero_byte` | Rejected | Empty-file validation |
+
+**Key dataclasses:** `FieldTestResult`, `FileTestResult`, `ToggleTestResult`, `PublishTestResult`,
+`DeepTestReport`
+
+**Output:** `results/deep_field_tests.json`, `results/swarm_results_v6_5.json`
+
+---
+
+### `assertion_engine.py` — QA Assertion Evaluator
+
+Standalone evaluator that reads `qa_rules.json` and `deep_field_tests.json` and produces
+structured **PASS / FAIL / NO_DATA** verdicts per rule.
+
+**Rule categories evaluated:**
+
+| Category | Rules Checked |
+|---|---|
+| Field — required | Empty / whitespace accepted without error |
+| Field — max_length | Inputs exceeding defined character limit accepted without error |
+| Field — reject_xss | XSS payload accepted without validation or sanitisation |
+| Field — reject_sql | SQL injection payload accepted without validation |
+| File Upload | Invalid type accepted, zero-byte accepted, valid PNG rejected |
+| Publish | Empty form published, XSS payload published, overflow published |
+
+**Console output (failures only):**
+```
+[ASSERTION FAIL] 'enter creative name' accepted XSS payload without validation or sanitisation
+[ASSERTION FAIL] 'enter creative name' accepted empty input without validation error
+```
+
+**Output:** `results/assertion_report.json`
+
+```json
+{
+  "summary": { "total": 14, "passed": 6, "failed": 6, "no_data": 2, "pass_rate": "50%" },
+  "results": {
+    "enter_creative_name_required":   "FAIL",
+    "enter_creative_name_reject_xss": "FAIL",
+    "file_upload_reject_invalid_type": "NO_DATA"
+  },
+  "assertions": [ { "id": "...", "result": "FAIL", "severity": "CRITICAL", ... } ]
+}
+```
+
+---
+
+### `app.py` — Streamlit QA Dashboard
+
+5-page interactive dashboard rendering all test data with Plotly charts and an AI analysis panel.
+Loads all result files at startup (gracefully degrades if any are missing). Includes a
+**▶ Run Assertion Engine** button that triggers `assertion_engine.py` in-process.
+
+---
+
+### `memory/memory.json` — Persistent Cross-Run Memory
+
+JSON file written after every run. Tracks:
+- `creatives` — list of all created creatives with agent, name, timestamp, edited flag
+- `campaigns` — list of all created campaigns
+- `visited_pages` — list of routes visited by any agent
+- `edited_ids` — set of creative IDs already edited
+
+Enables agents in subsequent runs to build on prior work (e.g., skip creating creatives if
+enough already exist and focus on campaigns instead).
+
+---
+
+### `results/` — All Test Output
+
+| File | Contents |
+|---|---|
+| `swarm_results_v6.json` | Per-agent summary from the v6 run |
+| `swarm_results_v6_5.json` | Per-agent summary from the v6.5 run (includes field test counts) |
+| `deep_field_tests.json` | Full per-field, per-variation, per-agent test records |
+| `assertion_report.json` | PASS/FAIL verdicts from the assertion engine |
+| `deep_engine/*.png` | Per-step screenshots from the deep creator engine |
+| `screenshots/` | Agent-level screenshots from earlier swarm versions |
+
+---
+
+## 5. Agent Design
+
+### Personas
+
+Each agent is assigned a **persona** that shapes its content generation and decision weights.
+
+| Persona | Description | Typical Behaviour |
+|---|---|---|
+| `normal_user` | Casual online shopper | Balanced mix of creating, editing, and exploring |
+| `power_user` | Digital marketing professional | Heavily focused on editing and campaigns |
+| `confused_user` | SMB owner new to digital ads | Spends more time exploring; creates cautiously |
+| `stress_tester` | QA engineer | Creates creatives repeatedly and fast |
+| `edge_case_user` | Adversarial advertiser | Seeks out unedited creatives and edge-case flows |
+
+### Agent Matrix (v6.5 — 10 agents)
+
+```
+a01_normal_A    → normal_user
+a02_power_A     → power_user
+a03_confused_A  → confused_user
+a04_stress_A    → stress_tester
+a05_edge_A      → edge_case_user
+a06_normal_B    → normal_user
+a07_power_B     → power_user
+a08_confused_B  → confused_user
+a09_stress_B    → stress_tester     ← highest deep_field_test weight
+a10_edge_B      → edge_case_user    ← highest deep_field_test weight
+```
+
+### Decision Engine — 7 Rules
+
+```
+Rule 1:  stress_tester on steps 1-3         → create_creative  (rapid creation)
+Rule 2:  System has 0 creatives             → create_creative  (bootstrap)
+Rule 3:  Agent hasn't created + system < 3  → create_creative  (ensure baseline)
+Rule 4:  edge_case_user + unedited exist    → edit_creative    (adversarial edit)
+Rule 5:  Agent created but never edited     → edit_creative    (workflow completion)
+Rule 6:  No campaigns + agent has creatives → create_campaign  (campaign creation)
+Rule 7:  End-game                           → persona-weighted random choice
+```
+
+**Persona weights for end-game random selection:**
+
+| Persona | create | edit | campaign | explore | deep_field_test |
+|---|---|---|---|---|---|
+| normal_user | 3 | 2 | 2 | 1 | 0 |
+| power_user | 2 | 3 | 3 | 1 | 0 |
+| confused_user | 2 | 1 | 1 | 4 | 0 |
+| stress_tester | 6 | 2 | 0 | 1 | 4 |
+| edge_case_user | 2 | 4 | 0 | 2 | 5 |
+
+---
+
+## 6. Testing Capabilities
+
+### Happy Path Testing
+
+Every `create_creative` action runs the full 14-step deep creator flow:
+- Login → Navigate → Click Create → Select Ad Type → Select Size → Select Format
+- Wait for Editor → Fill Inputs (AI content) → Upload File → Handle Toggles
+- Style Settings → Publish → Verify Success
+
+A run with 10/10 agent success confirms the entire creation workflow is functional.
+
+### Edge Case Testing
+
+**Form Inputs:**
+- Whitespace-only inputs (`"   "`)
+- Unicode / emoji characters (`Ünïcödé`, `🚀 Flash Sale`)
+- Extremely long strings (200 and 500 characters)
+- Special characters (`!@#$%^&*()_+-=[]{}|`)
+
+**File Uploads:**
+- Zero-byte PNG (should reject)
+- ~4 MB PNG (tests upload size limit)
+- `.txt` file with `.png`-style name (tests MIME / extension validation)
+
+### Stress Testing
+
+`stress_tester` persona agents are weighted to run `create_creative` 6× before any other action.
+Combined with 2 stress_tester instances, this exercises the backend's ability to handle
+concurrent create operations from multiple users simultaneously.
+
+### Negative Testing (Security)
+
+| Test | Payload | Expected Result | Actual (from run) |
+|---|---|---|---|
+| XSS input | `<script>alert('xss')</script>` | Rejected or sanitised | Accepted — CRITICAL |
+| SQL injection | `'; DROP TABLE creatives; --` | Rejected or sanitised | Accepted — CRITICAL |
+| Invalid file type | `.txt` uploaded to image field | Rejected | Varies |
+| Empty required field | `""` submitted | Validation error shown | Accepted — WARNING |
+| Overflow at publish | 500 chars in all fields | Publish blocked | Varies |
+| XSS payload at publish | XSS in all fields | Publish blocked | Varies |
+
+---
+
+## 7. AI Integration
+
+### Content Generation
+
+Each agent generates unique, persona-tailored ad creative content before calling the deep
+creator engine. The LLM prompt includes the agent's persona context and requests a
+structured JSON response.
+
+**Prompt structure:**
+```
+Generate realistic ad content for a digital banner creative.
+Advertiser context: {persona_context}
+
+Return ONLY valid JSON with these exact keys:
+{
+  "name": "unique creative name 5-8 words",
+  "headline": "punchy headline 3-6 words",
+  "description": "benefit-driven description 8-15 words",
+  "cta": "action phrase 2-3 words"
+}
+```
+
+**Provider selection logic:**
+1. Check `AI_PROVIDER` env var (`openai` or `groq`)
+2. If not set, auto-detect: OPENAI key present → OpenAI; else GROQ key → Groq; else → static
+3. Static fallback pool of headlines, descriptions, and CTAs used if AI unavailable
+
+### AI in the Dashboard
+
+The **Insights Panel** includes an AI analysis section that sends a compact summary of all
+test findings to the LLM and requests a prose QA report covering:
+- Critical security risks (XSS, SQLi, file type bypass)
+- Missing validation gaps
+- UX issues
+- Top 3 actionable engineering recommendations
+
+The compact summary is a minimal JSON payload (no screenshots) safe to send to any LLM.
+
+---
+
+## 8. Dashboard Features
+
+Open the dashboard with:
+```bash
+streamlit run app.py
+```
+
+### Page 1 — Overview
+- 6 KPI metrics: Agents Run, Creatives Created, Field Tests Run, Success Rate, Duration, AI Provider
+- Agent summary table with colour-coded status (SUCCESS / PARTIAL / FAIL)
+- Cumulative creative creation timeline (line chart)
+- Agent contribution pie chart
+- Memory snapshot (total creatives, campaigns, pages visited) with expandable lists
+
+### Page 2 — Field Testing Analysis
+- Error rate metrics across all field tests
+- **Field Failures tab**: errors-per-field bar chart, errors-by-variation bar chart, field × variation heatmap
+- **Security tab**: XSS / SQL / special / unicode acceptance bar chart; inline callouts for any accepted attack payload
+- **File Upload tab**: stacked accept/reject bar chart per file type
+- **Publish Validation tab**: publish success bar by test type; inline alerts for critical failures
+
+### Page 3 — Agent Explorer
+- Per-agent selectbox
+- Decision timeline with colour-coded action badges
+- Actions performed table (step, action, status, errors, detail)
+- Error list for failed steps
+- Expandable per-run field test reports with variation-level dataframe
+
+### Page 4 — Insights Panel
+- Severity metric row (Critical / Error / Warning / Info counts)
+- Severity pie chart + issues-by-category horizontal bar chart
+- Filterable issue list with colour-bordered severity cards
+- AI analysis section (LLM-generated prose report, cached 10 min)
+
+### Page 5 — Assertions
+- **▶ Run Assertion Engine** button — triggers `assertion_engine.py` and refreshes
+- Summary metrics: Total / PASS / FAIL / NO_DATA / Pass Rate
+- **PASS/FAIL Table tab**: full assertion table with emoji status
+- **Charts tab**: PASS/FAIL/NO_DATA pie + failed assertions by severity bar chart
+- **Detail tab**: filterable coloured assertion cards with expandable evidence
+- Flat results dict expander (`assertion_report.json → "results"`)
+
+### Sidebar
+
+- Page navigation radio
+- Results file selector (all `swarm_results_*.json` files)
+- Refresh data button
+- Status indicators: AI provider, field tests file presence, assertions file presence, swarm data
+
+---
+
+## 9. Deployment
+
+### Local Run
+
+**Prerequisites:** Python 3.11+, `pip`, Playwright browser installed
+
+```bash
+# 1. Clone and enter directory
+cd swarm_agents
+
+# 2. Install Python dependencies
+pip install -r requirements.txt
+
+# 3. Install Playwright Chromium browser
+playwright install chromium
+
+# 4. Configure API keys
+copy .env.example .env     # Windows
+# cp .env.example .env     # Mac/Linux
+# Edit .env and fill in your OPENAI_API_KEY or GROQ_API_KEY
+
+# 5. Run the swarm (generates creatives + field tests)
+python run_swarm_v6_5.py
+
+# 6. Run the assertion engine
+python assertion_engine.py
+
+# 7. Launch the dashboard
+streamlit run app.py
+# Open: http://localhost:8501
+```
+
+### Docker Setup
+
+```bash
+# Build image
+docker build -t qa-dashboard .
+
+# Run dashboard (reads pre-generated results from image)
+docker run -p 8501:8501 --env-file .env qa-dashboard
+
+# Override default command to run swarm instead
+docker run --env-file .env qa-dashboard python run_swarm_v6_5.py
+
+# Mount results directory to persist output to host
+docker run -p 8501:8501 \
+  --env-file .env \
+  -v $(pwd)/results:/app/results \
+  -v $(pwd)/memory:/app/memory \
+  qa-dashboard
+```
+
+**Dashboard:** `http://localhost:8501`
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | One of the two | OpenAI key for `gpt-4o-mini` |
+| `GROQ_API_KEY` | One of the two | Groq key for `llama-3.3-70b-versatile` |
+| `AI_PROVIDER` | No | Force provider: `openai` or `groq` (auto-detected if omitted) |
+
+Both keys are optional — the system runs in static-content mode if neither is set.
+
+---
+
+## 10. Folder Structure
+
+```
+swarm_agents/
+│
+├── deep_creator_engine.py      # Core 14-step browser automation engine
+├── run_swarm_v6.py             # AI-powered swarm runner (v6)
+├── run_swarm_v6_5.py           # Deep field testing swarm (v6.5)
+├── assertion_engine.py         # PASS/FAIL rule evaluator (v7.5)
+├── app.py                      # Streamlit QA dashboard (v7 + v7.5)
+│
+├── qa_rules.json               # Rule contract (edit to match your product)
+├── .env.example                # API key template
+├── requirements.txt            # Python dependencies
+├── Dockerfile                  # Docker build spec
+│
+├── memory/
+│   └── memory.json             # Persistent cross-run shared state
+│
+├── results/
+│   ├── swarm_results_v6.json   # v6 run summary
+│   ├── swarm_results_v6_5.json # v6.5 run summary (with field test counts)
+│   ├── deep_field_tests.json   # Per-field, per-variation test records
+│   ├── assertion_report.json   # PASS/FAIL assertion verdicts
+│   ├── deep_engine/            # Step-by-step screenshots from deep engine
+│   └── screenshots/            # Agent-level screenshots from earlier versions
+│
+├── assets/
+│   ├── dummy.png               # Valid image used by deep creator engine
+│   ├── invalid_upload.txt      # Invalid file for upload rejection test
+│   ├── large_4096kb.png        # ~4 MB PNG for size limit test
+│   └── zero_byte.png           # Empty file for zero-byte rejection test
+│
+├── personas/
+│   ├── types.py                # Persona type definitions
+│   └── base.py                 # Base persona class
+│
+└── agents/
+    └── ui_agent.py             # Legacy agent module (v1-v3)
+```
+
+---
+
+## 11. How to Run
+
+### Step 1 — Install Dependencies
+
+```bash
+pip install -r requirements.txt
+playwright install chromium --with-deps
+```
+
+### Step 2 — Configure API Keys
+
+```bash
+copy .env.example .env
+```
+
+Open `.env` and replace the placeholder values:
+
+```env
+AI_PROVIDER=groq                    # or openai
+OPENAI_API_KEY=sk-proj-...          # from platform.openai.com/api-keys
+GROQ_API_KEY=gsk_...                # from console.groq.com/keys
+```
+
+### Step 3 — Run the Swarm
+
+```bash
+python run_swarm_v6_5.py
+```
+
+Watch the console output. Each agent logs its decisions, actions, and field test results.
+Expect the run to take 3–8 minutes depending on your machine and network speed.
+
+**Successful output looks like:**
+```
+[a01_normal_A] Step 1 → create_creative
+[AI] [a01_normal_A] Generated content:
+[AI]   headline    : Summer Deals You Can't Miss
+[ASSERTION FAIL] 'enter creative name' accepted XSS payload without validation or sanitisation
+...
+==========================================
+ SWARM COMPLETE — 15 creatives, 13 field tests
+==========================================
+```
+
+### Step 4 — Run the Assertion Engine
+
+```bash
+python assertion_engine.py
+```
+
+Output:
+```
+[ASSERTION ENGINE] 13 test report(s) loaded from deep_field_tests.json
+[ASSERTION ENGINE] Evaluating rules from qa_rules.json
+
+[ASSERTION FAIL] 'enter creative name' accepted empty input without validation error
+[ASSERTION FAIL] 'enter creative name' accepted XSS payload without validation or sanitisation
+...
+
+============================================================
+ASSERTION REPORT SUMMARY
+============================================================
+  Total assertions : 14
+  PASS             : 6
+  FAIL             : 6
+  NO_DATA          : 2
+  Pass rate        : 50%
+  Output saved to  : results/assertion_report.json
+============================================================
+```
+
+### Step 5 — Launch the Dashboard
+
+```bash
+streamlit run app.py
+```
+
+Open `http://localhost:8501` in your browser.
+
+---
+
+## 12. Future Scope
+
+### Replay System
+
+Record every agent's full action sequence (decisions, inputs, timings) and replay it
+deterministically at any future time. This enables regression testing — run the same agent
+sequence against a new deployment and diff the results.
+
+### Scaling to More Agents
+
+The current `POOL_SIZE = 5` cap is set for a single developer machine. On a CI server or cloud
+instance, this can be raised to 20–50 agents. Add an orchestration layer (e.g., Celery,
+Ray, or a simple queue) to distribute agents across multiple machines.
+
+### Multi-App Testing
+
+Parameterise `BASE_URL` and credentials to point at different environments (staging, production,
+canary). Run the same assertion contract against all environments in parallel and diff the
+reports to detect environment-specific regressions.
+
+### CI/CD Integration
+
+```yaml
+# Example GitHub Actions step
+- name: Run QA Swarm
+  run: |
+    python run_swarm_v6_5.py
+    python assertion_engine.py
+- name: Fail if critical assertions fail
+  run: python -c "
+    import json, sys
+    r = json.load(open('results/assertion_report.json'))
+    crits = [a for a in r['assertions'] if a['result']=='FAIL' and a['severity']=='CRITICAL']
+    sys.exit(len(crits))
+  "
+```
+
+### Visual Regression Testing
+
+Capture baseline screenshots for each editor step. On subsequent runs, compare pixel-diffs using
+a tool like Pixelmatch or Percy to detect unintended UI changes.
+
+### Mutation Testing for Assertions
+
+Automatically mutate `qa_rules.json` (e.g., flip `reject_xss: true` to `false`) and verify
+that the assertion engine correctly flips from FAIL to PASS — validating the assertion
+engine's own correctness.
+
+### LLM-Driven Decision Engine
+
+Replace the current 7-rule deterministic tree with an LLM-powered decision agent that receives
+the full SharedMemory snapshot and reasons about the most valuable next action to take — making
+the swarm truly adaptive rather than rule-bounded.
+
+---
+
+## Quick Reference
+
+| Command | Purpose |
+|---|---|
+| `python run_swarm_v6_5.py` | Run the full swarm + field testing |
+| `python run_swarm_v6.py` | Run swarm (creative creation only, no field tests) |
+| `python assertion_engine.py` | Evaluate test results against qa_rules.json |
+| `streamlit run app.py` | Launch the QA dashboard |
+| `docker build -t qa-dashboard .` | Build Docker image |
+| `docker run -p 8501:8501 --env-file .env qa-dashboard` | Run dashboard in Docker |
+
+---
+
+*Built with Python 3.11, Playwright, Streamlit, Plotly, OpenAI, and Groq.*
