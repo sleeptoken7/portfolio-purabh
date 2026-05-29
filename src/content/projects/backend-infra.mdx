@@ -1,0 +1,18 @@
+# Backend Restructuring & Strategic Infrastructure
+
+This project outlines a high-level architectural overhaul of the LLM pipeline's backend, moving from a monolithic script to a modular, production-grade service oriented architecture.
+
+## Key Objectives
+- **Modularity:** Separation of concerns between the Crawler, Extractor, and Resolver layers.
+- **Scalability:** Transitioning to a Docker-compose environment to handle parallel processing.
+- **Resilience:** Implementation of checkpointing and state management to ensure zero data loss during long-running batch jobs.
+
+## Architecture Decisions
+- **FastAPI Migration:** Moving the results API to a modern, asynchronous framework.
+- **Postgres/Redis Integration:** Implementing structured storage for clinical codes and a caching layer for frequent entity resolutions.
+- **Modular Pipeline Runner:** A thin coordinator script that handles dependency injection and stage sequencing.
+
+## Impact
+- **Developer Velocity:** Reduced debugging time by isolating failures to specific pipeline stages.
+- **Reliability:** 100% resume capability for interrupted jobs.
+- **Maintainability:** Standardized environment via Docker.

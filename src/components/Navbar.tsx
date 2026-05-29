@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Mail } from "lucide-react";
+import { Github, Linkedin, Mail } from "lucide-react";
 
 export function Navbar() {
   return (
@@ -15,13 +15,13 @@ export function Navbar() {
         <Link href="#experience" className="text-sm font-medium hover:text-accent transition-colors">Experience</Link>
         <div className="h-4 w-px bg-border mx-2" />
         <div className="flex items-center gap-4">
-          <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors text-xs font-bold">
-            GH
+          <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
+            <Github size={20} />
           </a>
-          <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors text-xs font-bold">
-            LI
+          <a href="https://linkedin.com/in/purabh-singh" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
+            <Linkedin size={20} />
           </a>
-          <a href="mailto:purabh@example.com" className="hover:text-accent transition-colors">
+          <a href="mailto:purabhsingh2004@gmail.com" className="hover:text-accent transition-colors">
             <Mail size={20} />
           </a>
         </div>
