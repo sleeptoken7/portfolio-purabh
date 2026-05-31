@@ -2,6 +2,7 @@ import { Navbar } from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { BentoCard } from "@/components/ui/BentoCard";
 import Link from "next/link";
+import Image from "next/image";
 import { 
   Database, 
   Cpu, 
@@ -13,14 +14,30 @@ import {
   BrainCircuit,
   Terminal,
   ShieldCheck,
-  Mail
+  Mail,
+  GitHub,
+  LinkedIn
 } from "lucide-react";
 
 export default function Home() {
   return (
     <div className="min-h-screen px-6 md:px-12 lg:px-24 max-w-7xl mx-auto pb-20">
       <Navbar />
-      <Hero />
+      <main className="flex flex-col md:flex-row items-center justify-between gap-12 mt-8 md:mt-16">
+        <div className="md:w-3/5 lg:w-2/3">
+          <Hero />
+        </div>
+        <div className="w-full md:w-2/5 lg:w-1/3">
+          <Image
+            src="/profile.png"
+            alt="Purabh Singh"
+            width={400}
+            height={400}
+            className="rounded-2xl border-2 border-border shadow-2xl object-cover aspect-square w-full h-auto"
+            priority
+          />
+        </div>
+      </main>
       
       <section id="projects" className="mt-20">
         <div className="flex justify-between items-end mb-10">
@@ -190,17 +207,17 @@ export default function Home() {
           </div>
           <div className="flex gap-4 mt-4">
             <a 
-              href="mailto:purabhsingh2004@gmail.com" 
+              href="mailto:purabhsingh200426@gmail.com" 
               className="bg-accent text-accent-foreground px-8 py-3 rounded-full font-bold hover:scale-105 transition-all flex items-center gap-2"
             >
               Contact Me
             </a>
             <div className="flex items-center gap-4 px-4 border-l border-border ml-4">
-              <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors font-bold">
-                GH
+              <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
+                <GitHub size={24} />
               </a>
-              <a href="https://linkedin.com/in/ps26dkkr" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors font-bold">
-                LI
+              <a href="https://linkedin.com/in/ps26dkkr" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
+                <LinkedIn size={24} />
               </a>
             </div>
           </div>
@@ -211,8 +228,8 @@ export default function Home() {
         <p>© {new Date().getFullYear()} Purabh Singh. Built with Next.js, Framer Motion & Logic.</p>
         <div className="flex gap-6">
           <a href="https://github.com/sleeptoken7" className="hover:text-foreground transition-colors">GitHub</a>
-          <a href="https://linkedin.com/in/purabh-singh" className="hover:text-foreground transition-colors">LinkedIn</a>
-          <a href="mailto:purabhsingh2004@gmail.com" className="hover:text-foreground transition-colors">Email</a>
+          <a href="https://www.linkedin.com/in/ps26dkkr/" className="hover:text-foreground transition-colors">LinkedIn</a>
+          <a href="mailto:purabhsingh200426@gmail.com" className="hover:text-foreground transition-colors">Email</a>
         </div>
       </footer>
     </div>
