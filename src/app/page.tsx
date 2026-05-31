@@ -13,8 +13,6 @@ import {
   BrainCircuit,
   Terminal,
   ShieldCheck,
-  Github,
-  Linkedin,
   Mail
 } from "lucide-react";
 
@@ -198,11 +196,11 @@ export default function Home() {
               Contact Me
             </a>
             <div className="flex items-center gap-4 px-4 border-l border-border ml-4">
-              <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
-                <Github size={24} />
+              <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors font-bold">
+                GH
               </a>
-              <a href="https://linkedin.com/in/purabh-singh" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
-                <Linkedin size={24} />
+              <a href="https://linkedin.com/in/ps26dkkr" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors font-bold">
+                LI
               </a>
             </div>
           </div>
