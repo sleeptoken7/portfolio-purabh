@@ -216,7 +216,7 @@ export default function Home() {
               <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
                 <GitHub size={24} />
               </a>
-              <a href="https://linkedin.com/in/ps26dkkr" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
+              <a href="https://www.linkedin.com/in/ps26dkkr/" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
                 <LinkedIn size={24} />
               </a>
             </div>
