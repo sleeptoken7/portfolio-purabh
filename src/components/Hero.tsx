@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
-import { FileText, Download, ExternalLink } from "lucide-react";
+import { FiFileText, FiDownload, FiExternalLink } from 'react-icons/fi'
 
 export function Hero() {
   const [showResumeOptions, setShowResumeOptions] = useState(false);
@@ -56,20 +56,20 @@ export function Hero() {
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
                 className="absolute top-full left-0 mt-2 w-48 bg-card border border-border rounded-xl shadow-2xl z-50 p-2 overflow-hidden"
               >
-                <a 
-                  href="/resume.pdf" 
-                  target="_blank"
-                  className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted rounded-lg transition-colors"
-                >
-                  <ExternalLink size={16} className="text-accent" /> View in Browser
-                </a>
-                <a 
-                  href="/resume.pdf" 
-                  download
-                  className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted rounded-lg transition-colors"
-                >
-                  <Download size={16} className="text-accent" /> Download PDF
-                </a>
+                    <a 
+                      href="/resume.pdf" 
+                      target="_blank"
+                      className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted rounded-lg transition-colors"
+                    >
+                      <FiExternalLink size={16} className="text-accent" /> View in Browser
+                    </a>
+                    <a 
+                      href="/resume.pdf" 
+                      download
+                      className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted rounded-lg transition-colors"
+                    >
+                      <FiDownload size={16} className="text-accent" /> Download PDF
+                    </a>
               </motion.div>
             )}
           </AnimatePresence>

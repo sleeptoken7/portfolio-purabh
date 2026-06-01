@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { GitHub, LinkedIn, Mail } from "lucide-react";
+import { AiFillGithub, AiFillLinkedin } from 'react-icons/ai'
+import { MdMail } from 'react-icons/md'
 
 export function Navbar() {
   return (
@@ -16,13 +17,13 @@ export function Navbar() {
         <div className="h-4 w-px bg-border mx-2" />
         <div className="flex items-center gap-4">
           <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
-            <GitHub size={20} />
+            <AiFillGithub size={20} />
           </a>
           <a href="https://www.linkedin.com/in/ps26dkkr/" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
-            <LinkedIn size={20} />
+            <AiFillLinkedin size={20} />
           </a>
           <a href="mailto:purabhsingh200426@gmail.com" className="hover:text-accent transition-colors">
-            <Mail size={20} />
+            <MdMail size={20} />
           </a>
         </div>
       </div>
