@@ -49,8 +49,8 @@ export default function Home() {
         <div className="bento-grid">
           {/* AdPrime Project - Large */}
           <BentoCard 
-            title="AdPrime ICD-10 Intelligence"
-            description="Production LLMOps pipeline automating clinical code resolution with local models."
+            title="Healthcare Code Resolver"
+            description="Production pipeline automating clinical code resolution with local models."
             icon={<Cpu size={24} />}
             className="col-span-2 row-span-2"
           >
