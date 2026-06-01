@@ -1,0 +1,2 @@
+original_path,private_copy,public_path,replacements
+src/content/projects/icd10-pipeline.mdx,src/content/projects/private/icd10-pipeline.full.mdx,src/content/projects/icd10-pipeline.mdx,"AdPrime=>Private Healthcare Partner; ICD-10=>medical-classification dataset; icd10=>medical_codes; icd10.db=>medical_codes.db; skill-icd10-extractor.md=>skill-medical-extractor.md"

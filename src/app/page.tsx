@@ -13,11 +13,10 @@ import {
   Server, 
   BrainCircuit,
   Terminal,
-  ShieldCheck,
-  Mail,
-  GitHub,
-  LinkedIn
+  ShieldCheck
 } from "lucide-react";
+import { AiFillGithub, AiFillLinkedin } from 'react-icons/ai'
+import { MdMail } from 'react-icons/md'
 
 export default function Home() {
   return (
@@ -50,8 +49,8 @@ export default function Home() {
         <div className="bento-grid">
           {/* AdPrime Project - Large */}
           <BentoCard 
-            title="AdPrime ICD-10 Intelligence"
-            description="Production LLMOps pipeline automating clinical code resolution with local models."
+            title="Healthcare Code Resolver"
+            description="Production pipeline automating clinical code resolution with local models."
             icon={<Cpu size={24} />}
             className="col-span-2 row-span-2"
           >
@@ -197,7 +196,7 @@ export default function Home() {
       <section id="contact" className="mt-20">
         <div className="bento-card p-10 flex flex-col items-center text-center gap-6">
           <div className="p-3 bg-accent/10 rounded-full text-accent">
-            <Mail size={32} />
+            <MdMail size={32} />
           </div>
           <div>
             <h2 className="text-3xl font-bold tracking-tighter mb-2">Ready for the next challenge.</h2>
@@ -214,10 +213,10 @@ export default function Home() {
             </a>
             <div className="flex items-center gap-4 px-4 border-l border-border ml-4">
               <a href="https://github.com/sleeptoken7" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
-                <GitHub size={24} />
+                <AiFillGithub size={24} />
               </a>
               <a href="https://www.linkedin.com/in/ps26dkkr/" target="_blank" rel="noopener noreferrer" className="hover:text-accent transition-colors">
-                <LinkedIn size={24} />
+                <AiFillLinkedin size={24} />
               </a>
             </div>
           </div>
